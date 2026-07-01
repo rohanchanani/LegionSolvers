@@ -78,19 +78,30 @@ void top_level_task(
 
     LegionSolvers::CGSolver<ENTRY_T> solver{planner};
 
+    const auto begin_next_repartition = [&]() {
+        const Legion::IndexPartition next_partition =
+            rt->create_equal_partition(
+                ctx, vector_index_space, vector_color_space
+            );
+        planner.begin_repartition(0, next_partition);
+#ifndef LEGION_SOLVERS_DISABLE_CLEANUP
+        rt->destroy_index_partition(ctx, next_partition);
+#endif // LEGION_SOLVERS_DISABLE_CLEANUP
+    };
+
+    if (repartition_interval > 0 && repartition_interval < num_iterations) {
+        begin_next_repartition();
+    }
+
     for (std::size_t i = 0; i < num_iterations; ++i) {
         solver.step();
         if (repartition_interval > 0 &&
             ((i + 1) % repartition_interval) == 0 &&
             (i + 1) < num_iterations) {
-            const Legion::IndexPartition next_partition =
-                rt->create_equal_partition(
-                    ctx, vector_index_space, vector_color_space
-                );
-            planner.repartition(0, next_partition);
-#ifndef LEGION_SOLVERS_DISABLE_CLEANUP
-            rt->destroy_index_partition(ctx, next_partition);
-#endif // LEGION_SOLVERS_DISABLE_CLEANUP
+            planner.commit_repartition();
+            if ((i + 1 + repartition_interval) < num_iterations) {
+                begin_next_repartition();
+            }
         }
     }
 

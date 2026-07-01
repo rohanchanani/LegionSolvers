@@ -46,8 +46,16 @@ class SquarePlanner {
         Legion::IndexPartition ghost_partition;
     };
 
+    struct PendingRepartition {
+        std::size_t space_index;
+        Legion::IndexPartition new_partition;
+        std::vector<RowPartitionedMatrixArtifacts>
+            row_partitioned_matrix_artifacts;
+    };
+
     std::vector<RowPartitionedMatrix> row_partitioned_matrices;
     std::vector<RowPartitionedMatrixArtifacts> row_partitioned_matrix_artifacts;
+    std::unique_ptr<PendingRepartition> pending_repartition;
 
     std::vector<std::tuple<
         const AbstractMatrix<ENTRY_T> *,
@@ -72,10 +80,12 @@ public:
         , workspace_vectors()
         , row_partitioned_matrices()
         , row_partitioned_matrix_artifacts()
+        , pending_repartition()
         , tile_partitioned_matrices() {}
 
     ~SquarePlanner() {
 #ifndef LEGION_SOLVERS_DISABLE_CLEANUP
+        destroy_pending_repartition();
         destroy_row_partition_artifacts();
         for (const auto &region : workspace_regions) {
             rt->destroy_logical_region(ctx, region);
@@ -228,11 +238,12 @@ public:
         );
     }
 
-    void repartition(
+    void begin_repartition(
         std::size_t space_index, Legion::IndexPartition new_partition
     ) {
         [[maybe_unused]] const std::size_t num_spaces = get_num_spaces();
         assert(space_index < num_spaces);
+        assert(pending_repartition == nullptr);
         assert(
             rt->get_parent_index_space(new_partition) ==
             canonical_index_spaces[space_index]
@@ -241,26 +252,67 @@ public:
         assert(rt->is_index_partition_disjoint(new_partition));
 
         rt->create_shared_ownership(ctx, new_partition);
+
+        std::vector<Legion::IndexPartition> pending_partitions =
+            canonical_index_partitions;
+        pending_partitions[space_index] = new_partition;
+
+        auto pending = std::make_unique<PendingRepartition>();
+        pending->space_index = space_index;
+        pending->new_partition = new_partition;
+        for (const RowPartitionedMatrix &matrix : row_partitioned_matrices) {
+            pending->row_partitioned_matrix_artifacts.push_back(
+                build_row_partition_artifact(matrix, pending_partitions)
+            );
+        }
+        pending_repartition = std::move(pending);
+    }
+
+    bool has_pending_repartition() const { return bool(pending_repartition); }
+
+    void commit_repartition() {
+        assert(pending_repartition);
+        const std::size_t space_index = pending_repartition->space_index;
+        [[maybe_unused]] const std::size_t num_spaces = get_num_spaces();
+        assert(space_index < num_spaces);
+
         const Legion::IndexPartition old_partition =
             canonical_index_partitions[space_index];
-
         destroy_row_partition_artifacts();
-        canonical_index_partitions[space_index] = new_partition;
+        canonical_index_partitions[space_index] =
+            pending_repartition->new_partition;
 
-        rebuild_partitioned_vector(sol_vectors[space_index], new_partition);
-        rebuild_partitioned_vector(rhs_vectors[space_index], new_partition);
+        rebuild_partitioned_vector(
+            sol_vectors[space_index], pending_repartition->new_partition
+        );
+        rebuild_partitioned_vector(
+            rhs_vectors[space_index], pending_repartition->new_partition
+        );
 
-        if (!workspace_regions.empty()) {
+        if (workspace_regions.empty() == false) {
             workspace_partitions[space_index] = rt->get_logical_partition(
-                ctx, workspace_regions[space_index], new_partition
+                ctx,
+                workspace_regions[space_index],
+                pending_repartition->new_partition
             );
             for (auto &vectors : workspace_vectors) {
-                rebuild_partitioned_vector(vectors[space_index], new_partition);
+                rebuild_partitioned_vector(
+                    vectors[space_index], pending_repartition->new_partition
+                );
             }
         }
 
-        rebuild_row_partition_artifacts();
+        row_partitioned_matrix_artifacts =
+            std::move(pending_repartition->row_partitioned_matrix_artifacts);
+        pending_repartition.reset();
         rt->destroy_index_partition(ctx, old_partition);
+    }
+
+    void repartition(
+        std::size_t space_index, Legion::IndexPartition new_partition
+    ) {
+        begin_repartition(space_index, new_partition);
+        commit_repartition();
     }
 
     PartitionedVector<ENTRY_T> &
@@ -387,11 +439,13 @@ public:
 
 private:
 
-    RowPartitionedMatrixArtifacts
-    build_row_partition_artifact(const RowPartitionedMatrix &matrix) {
+    RowPartitionedMatrixArtifacts build_row_partition_artifact(
+        const RowPartitionedMatrix &matrix,
+        const std::vector<Legion::IndexPartition> &index_partitions
+    ) {
         const Legion::IndexPartition kernel_partition =
             matrix.matrix->create_kernel_partition_from_range_partition(
-                canonical_index_partitions[matrix.range_index]
+                index_partitions[matrix.range_index]
             );
         const Legion::IndexPartition ghost_partition =
             matrix.matrix->create_domain_partition_from_kernel_partition(
@@ -406,6 +460,11 @@ private:
         };
     }
 
+    RowPartitionedMatrixArtifacts
+    build_row_partition_artifact(const RowPartitionedMatrix &matrix) {
+        return build_row_partition_artifact(matrix, canonical_index_partitions);
+    }
+
     void rebuild_row_partition_artifacts() {
         assert(row_partitioned_matrix_artifacts.empty());
         for (const RowPartitionedMatrix &matrix : row_partitioned_matrices) {
@@ -415,15 +474,29 @@ private:
         }
     }
 
-    void destroy_row_partition_artifacts() {
-        for (const RowPartitionedMatrixArtifacts &artifact :
-             row_partitioned_matrix_artifacts) {
+    void destroy_row_partition_artifacts(
+        std::vector<RowPartitionedMatrixArtifacts> &artifacts
+    ) {
+        for (const RowPartitionedMatrixArtifacts &artifact : artifacts) {
             rt->destroy_index_partition(
                 ctx, artifact.kernel_index_partition
             );
             rt->destroy_index_partition(ctx, artifact.ghost_partition);
         }
-        row_partitioned_matrix_artifacts.clear();
+        artifacts.clear();
+    }
+
+    void destroy_row_partition_artifacts() {
+        destroy_row_partition_artifacts(row_partitioned_matrix_artifacts);
+    }
+
+    void destroy_pending_repartition() {
+        if (pending_repartition == nullptr) { return; }
+        destroy_row_partition_artifacts(
+            pending_repartition->row_partitioned_matrix_artifacts
+        );
+        rt->destroy_index_partition(ctx, pending_repartition->new_partition);
+        pending_repartition.reset();
     }
 
     void rebuild_partitioned_vector(
