@@ -20,6 +20,16 @@
 
 #include <legion.h>
 
+#ifndef __CUDA_HD__
+#ifdef __LEGION_CUDA_HD__
+#define __CUDA_HD__ __LEGION_CUDA_HD__
+#elif defined(__CUDACC__)
+#define __CUDA_HD__ __host__ __device__
+#else
+#define __CUDA_HD__
+#endif
+#endif
+
 namespace LegionSolvers {
 
 // This is a small helper class that will also work if we have zero-sized arrays

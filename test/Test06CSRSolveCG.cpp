@@ -33,6 +33,7 @@ void top_level_task(
     VECTOR_COORD_T grid_size = 100;
     VECTOR_COLOR_COORD_T num_vector_pieces = 4;
     std::size_t num_iterations = 10;
+    std::size_t repartition_interval = 0;
     bool no_print_results = false;
 
     const Legion::InputArgs &args = Legion::Runtime::get_input_args();
@@ -41,6 +42,7 @@ void top_level_task(
             .add_option_int("-n", grid_size)
             .add_option_int("-vp", num_vector_pieces)
             .add_option_int("-it", num_iterations)
+            .add_option_int("-rp", repartition_interval)
             .add_option_bool("-np", no_print_results)
             .parse_command_line(args.argc, (const char **) args.argv);
     assert(ok);
@@ -76,7 +78,21 @@ void top_level_task(
 
     LegionSolvers::CGSolver<ENTRY_T> solver{planner};
 
-    for (std::size_t i = 0; i < num_iterations; ++i) { solver.step(); }
+    for (std::size_t i = 0; i < num_iterations; ++i) {
+        solver.step();
+        if (repartition_interval > 0 &&
+            ((i + 1) % repartition_interval) == 0 &&
+            (i + 1) < num_iterations) {
+            const Legion::IndexPartition next_partition =
+                rt->create_equal_partition(
+                    ctx, vector_index_space, vector_color_space
+                );
+            planner.repartition(0, next_partition);
+#ifndef LEGION_SOLVERS_DISABLE_CLEANUP
+            rt->destroy_index_partition(ctx, next_partition);
+#endif // LEGION_SOLVERS_DISABLE_CLEANUP
+        }
+    }
 
     if (!no_print_results) {
         Legion::Future dummy = Legion::Future::from_value<int>(rt, 0);
