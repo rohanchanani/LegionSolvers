@@ -5,7 +5,7 @@ repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 n=100000000
 it=2000
-rps=(0 1 2 5 10 25 50 100 500)
+rps=(0 1 2 5 10 25 50 100 500 1000 1500 2000)
 out_dir="$repo_dir/scratch/profiles/repart_initial_sweep_n100m"
 force=0
 extra_repart_args=()
@@ -24,7 +24,7 @@ Values are throughput in CG iterations per second.
 Options:
   -n N             application size (default: 100000000)
   -it ITERS        CG iterations (default: 2000)
-  --rps LIST       comma-separated repartition intervals (default: 0,1,2,5,10,25,50,100,500)
+  --rps LIST       comma-separated repartition intervals (default: 0,1,2,5,10,25,50,100,500,1000,1500,2000)
   --out-dir D      output directory (default: scratch/profiles/repart_initial_sweep_n100m)
   --force          rerun completed points instead of resuming from logs
   --fsize MB       pass through to ./repart
@@ -54,6 +54,10 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [[ "$out_dir" != /* ]]; then
+  out_dir="$repo_dir/$out_dir"
+fi
 
 mkdir -p "$out_dir"
 wide_csv="$out_dir/throughput.csv"

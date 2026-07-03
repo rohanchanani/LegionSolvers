@@ -31,8 +31,8 @@ Options:
   --fsize MB       Legion framebuffer size in MB (default: 35000 on Perlmutter, 15000 elsewhere)
   --help           show this help
 
-For -rp 0, this runner adds -lg:no_physical_tracing to avoid Legion physical
-trace replay reserving too many CSR matvec dynamic pools.
+For -rp 0, or -rp >= -it, this runner adds -lg:no_physical_tracing to avoid
+Legion physical trace replay reserving too many CSR matvec dynamic pools.
 USAGE
 }
 
@@ -74,7 +74,7 @@ if [[ -z "$fsize" ]]; then
   fi
 fi
 
-if [[ "$rp" == 0 ]]; then
+if (( rp == 0 || rp >= it )); then
   extra_legion_args+=(-lg:no_physical_tracing)
 fi
 
