@@ -101,7 +101,7 @@ COOMatrix<ENTRY_T> LegionSolvers::coo_negative_laplacian_1d(
     rt->destroy_index_space(ctx, kernel_space);
 #endif // LEGION_SOLVERS_DISABLE_CLEANUP
 
-    return result;
+    return static_cast<const COOMatrix<ENTRY_T> &>(result);
 }
 
 
@@ -245,7 +245,7 @@ CSRMatrix<ENTRY_T> LegionSolvers::csr_negative_laplacian_1d(
     rt->destroy_index_space(ctx, kernel_space);
 #endif // LEGION_SOLVERS_DISABLE_CLEANUP
 
-    return result;
+    return static_cast<const CSRMatrix<ENTRY_T> &>(result);
 }
 
 

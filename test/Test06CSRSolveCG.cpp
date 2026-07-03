@@ -1,4 +1,5 @@
 #include <cassert>
+#include <iostream>
 
 #include <legion.h>
 #include <realm/cmdline.h>
@@ -78,6 +79,15 @@ void top_level_task(
 
     LegionSolvers::CGSolver<ENTRY_T> solver{planner};
 
+    rt->issue_execution_fence(ctx);
+    rt->issue_mapping_fence(ctx);
+
+    const Legion::Future begin_time_future =
+        rt->get_current_time_in_nanoseconds(ctx);
+
+    rt->issue_execution_fence(ctx);
+    rt->issue_mapping_fence(ctx);
+
     for (std::size_t i = 0; i < num_iterations; ++i) {
         solver.step();
         if (repartition_interval > 0 &&
@@ -92,6 +102,41 @@ void top_level_task(
             rt->destroy_index_partition(ctx, next_partition);
 #endif // LEGION_SOLVERS_DISABLE_CLEANUP
         }
+    }
+
+    rt->issue_execution_fence(ctx);
+    rt->issue_mapping_fence(ctx);
+
+    const Legion::Future end_time_future =
+        rt->get_current_time_in_nanoseconds(ctx);
+
+    rt->issue_execution_fence(ctx);
+    rt->issue_mapping_fence(ctx);
+
+    const long long begin_time = begin_time_future.get_result<long long>();
+    const long long end_time = end_time_future.get_result<long long>();
+    const double elapsed_seconds =
+        static_cast<double>(end_time - begin_time) / 1.0e9;
+    const double iterations_per_second =
+        elapsed_seconds > 0.0 ?
+            static_cast<double>(num_iterations) / elapsed_seconds :
+            0.0;
+    const double mpoints_per_second =
+        iterations_per_second * static_cast<double>(grid_size) / 1.0e6;
+    const double gnnz_spmv_per_second =
+        iterations_per_second *
+        static_cast<double>(3 * grid_size - 2) / 1.0e9;
+
+    if (rt->get_shard_id(ctx, true) == 0) {
+        std::cout << "THROUGHPUT"
+                  << " n=" << grid_size
+                  << " it=" << num_iterations
+                  << " rp=" << repartition_interval
+                  << " seconds=" << elapsed_seconds
+                  << " iter_per_sec=" << iterations_per_second
+                  << " mpoints_per_sec=" << mpoints_per_second
+                  << " gnnz_spmv_per_sec=" << gnnz_spmv_per_second
+                  << std::endl;
     }
 
     if (!no_print_results) {

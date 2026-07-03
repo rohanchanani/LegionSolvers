@@ -92,7 +92,8 @@ void LegionSolversMapper::map_task(
     );
     const std::size_t rowptr_bytes =
         rowptr_domain.get_volume() * sizeof(long long);
-    const std::size_t cusparse_workspace_bytes = (rowptr_bytes + 255) / 256;
+    const std::size_t cusparse_workspace_bytes =
+        ((rowptr_bytes + 63) / 64) + 4096;
     const std::size_t pool_bytes =
         rowptr_bytes + cusparse_workspace_bytes;
 
