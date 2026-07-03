@@ -13,6 +13,7 @@ profile_dir="$repo_dir/scratch/profiles/repart_cg"
 build_dir=
 cpus=${SLURM_CPUS_ON_NODE:-}
 fsize=
+extra_legion_args=()
 
 usage() {
   cat <<USAGE
@@ -29,6 +30,9 @@ Options:
   --cpus N         CPUs for srun -c (default: allocation CPUs, then host default)
   --fsize MB       Legion framebuffer size in MB (default: 35000 on Perlmutter, 15000 elsewhere)
   --help           show this help
+
+For -rp 0, this runner adds -lg:no_physical_tracing to avoid Legion physical
+trace replay reserving too many CSR matvec dynamic pools.
 USAGE
 }
 
@@ -68,6 +72,10 @@ if [[ -z "$fsize" ]]; then
   else
     fsize=15000
   fi
+fi
+
+if [[ "$rp" == 0 ]]; then
+  extra_legion_args+=(-lg:no_physical_tracing)
 fi
 
 if [[ -z "$build_dir" ]]; then
@@ -116,12 +124,13 @@ fi
 
 cd "$build_dir"
 
-echo "RUN mode=$mode n=$n it=$it rp=$rp profile=$profile_file build_dir=$build_dir" | tee "$log_file"
+echo "RUN mode=$mode n=$n it=$it rp=$rp profile=$profile_file build_dir=$build_dir extra_legion_args=${extra_legion_args[*]:-none}" | tee "$log_file"
 "${env_cmd[@]}" "${srun_cmd[@]}" \
   ./Test06CSRSolveCG \
   -n "$n" -vp "$vp" -it "$it" -rp "$rp" -np \
   -ll:gpu "$gpus" -ll:util "$gpus" \
   -ll:csize 131072 -ll:fsize "$fsize" -ll:zsize 4096 \
+  "${extra_legion_args[@]}" \
   -lg:prof 1 \
   -lg:prof_logfile "$profile_file" \
   2>&1 | tee -a "$log_file"

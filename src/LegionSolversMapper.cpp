@@ -1,6 +1,7 @@
 #include "LegionSolversMapper.hpp"
 
 #include <cassert> // for assert
+#include <cstdlib> // for std::getenv
 #include <set>     // for std::set
 
 #include <mappers/logging_wrapper.h> // for Legion::Mapping::LoggingWrapper
@@ -55,7 +56,9 @@ void LegionSolversMapper::memoize_operation(
     const MemoizeInput &,
     MemoizeOutput &output
 ) {
-    output.memoize = true;
+    const char *disable = std::getenv("LEGION_SOLVERS_DISABLE_MEMOIZE");
+    output.memoize =
+        disable == nullptr || disable[0] == '\0' || disable[0] == '0';
 }
 
 

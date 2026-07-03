@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+n=100000000
+it=2000
+rps=(0 1 2 5 10 25 50 100 200 500)
+modes=(gpu cpu)
+out_dir="$repo_dir/scratch/profiles/repart_sweep_n100m"
+extra_repart_args=()
+
+usage() {
+  cat <<USAGE
+usage: ./repart_sweep [options]
+
+Options:
+  -n N             application size (default: 100000000)
+  -it ITERS        CG iterations (default: 2000)
+  --rps LIST       comma-separated repartition intervals (default: 0,1,2,5,10,25,50,100,200,500)
+  --modes LIST     comma-separated modes: gpu,cpu (default: gpu,cpu)
+  --out-dir D      output directory for per-run profiles/logs and throughput.csv
+  --fsize MB       pass through to ./repart
+  --cpus N         pass through to ./repart
+  --build-dir D    pass through to ./repart
+  --help           show this help
+USAGE
+}
+
+split_csv() {
+  local input=$1
+  local -n output=$2
+  IFS=',' read -r -a output <<< "$input"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n) n=$2; shift 2 ;;
+    -it) it=$2; shift 2 ;;
+    --rps) split_csv "$2" rps; shift 2 ;;
+    --modes) split_csv "$2" modes; shift 2 ;;
+    --out-dir) out_dir=$2; shift 2 ;;
+    --fsize) extra_repart_args+=(--fsize "$2"); shift 2 ;;
+    --cpus) extra_repart_args+=(--cpus "$2"); shift 2 ;;
+    --build-dir) extra_repart_args+=(--build-dir "$2"); shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+mkdir -p "$out_dir"
+csv="$out_dir/throughput.csv"
+echo "mode,n,it,rp,seconds,iter_per_sec,mpoints_per_sec,gnnz_spmv_per_sec,profile,log" > "$csv"
+
+for mode in "${modes[@]}"; do
+  case "$mode" in
+    gpu|cpu) ;;
+    *) echo "invalid mode in --modes: $mode" >&2; exit 2 ;;
+  esac
+
+  for rp in "${rps[@]}"; do
+    run_dir="$out_dir/${mode}_rp${rp}"
+    mkdir -p "$run_dir"
+
+    echo "=== mode=$mode n=$n it=$it rp=$rp ==="
+    "$repo_dir/repart" "--$mode" -n "$n" -it "$it" -rp "$rp" \
+      --profile-dir "$run_dir" "${extra_repart_args[@]}"
+
+    log="$run_dir/$mode.log"
+    profile="$run_dir/$mode.gz"
+    throughput=$(grep 'THROUGHPUT' "$log" | tail -1)
+    if [[ -z "$throughput" ]]; then
+      echo "missing THROUGHPUT line in $log" >&2
+      exit 1
+    fi
+
+    seconds=
+    iter_per_sec=
+    mpoints_per_sec=
+    gnnz_spmv_per_sec=
+    for field in $throughput; do
+      case "$field" in
+        seconds=*) seconds=${field#seconds=} ;;
+        iter_per_sec=*) iter_per_sec=${field#iter_per_sec=} ;;
+        mpoints_per_sec=*) mpoints_per_sec=${field#mpoints_per_sec=} ;;
+        gnnz_spmv_per_sec=*) gnnz_spmv_per_sec=${field#gnnz_spmv_per_sec=} ;;
+      esac
+    done
+
+    echo "$mode,$n,$it,$rp,$seconds,$iter_per_sec,$mpoints_per_sec,$gnnz_spmv_per_sec,$profile,$log" >> "$csv"
+  done
+done
+
+echo "CSV $csv"
