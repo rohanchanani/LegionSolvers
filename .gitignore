@@ -4,3 +4,7 @@
 /benchmarks/petsc/PETScSolverBenchmark
 /benchmarks/trilinos/build/
 /include/
+
+.idea
+scratch
+lib
